@@ -91,8 +91,10 @@ export async function handleAdminReviewRequest(request, { config, bot }) {
   try {
     return await route(request, url, { bot });
   } catch (error) {
+    // 与 web.js 对齐：原始错误只进日志，不回显给 HTTP 客户端
+    //（worker 异常文本可能带上游 URL/参数，管理端也不例外）。
     bot.logger?.error?.('后台审核接口失败：', String(error?.message ?? error));
-    return json({ ok: false, error: String(error?.message ?? error) }, 500);
+    return json({ ok: false, error: '内部错误，请稍后重试' }, 500);
   }
 }
 

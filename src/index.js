@@ -16,6 +16,7 @@ import { Store } from './store.js';
 import { Telegram } from './telegram.js';
 import { handleWebRequest } from './web.js';
 import { handleAdminReviewRequest } from './admin-review.js';
+import { safeEqual } from './client-ip.js';
 
 // 每个 isolate 里按 D1 绑定缓存 Bot 实例（Telegram 客户端、群 username 都是懒加载的）
 const botCache = new WeakMap();
@@ -53,8 +54,19 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    if (url.pathname === '/' || url.pathname === '/health') {
+    if (url.pathname === '/') {
       return json({ ok: true, service: 'telegram-submission-bot' });
+    }
+    if (url.pathname === '/health') {
+      // 运维排障入口（README「排障速查」）：除了进程活着，还要 D1 答得上来。
+      // D1 不可达时返回 503，监控/人一眼看出"Worker 活着但存储挂了"。
+      try {
+        if (!env.DB) return json({ ok: false, error: '缺少 D1 绑定' }, 503);
+        await env.DB.prepare('SELECT 1').run();
+        return json({ ok: true, service: 'telegram-submission-bot', db: 'ok' });
+      } catch (error) {
+        return json({ ok: false, db: 'unreachable', error: String(error?.message ?? error).slice(0, 120) }, 503);
+      }
     }
 
     let config;
@@ -82,8 +94,11 @@ export default {
     if (request.method !== 'POST') {
       return new Response('Method Not Allowed', { status: 405 });
     }
+    // 配置了 WEBHOOK_SECRET 之后，secret 头是第二道强制因子：
+    // 缺失或不对一律 403（Telegram 配了 secret_token 后必带此头，合法流量不受影响）。
+    // 之前"缺失即放行"的写法等于给伪造 update 留了门。
     const headerSecret = request.headers.get('X-Telegram-Bot-Api-Secret-Token');
-    if (headerSecret && config.webhookSecret && headerSecret !== config.webhookSecret) {
+    if (config.webhookSecret && (headerSecret === null || !safeEqual(headerSecret, config.webhookSecret))) {
       return new Response('Forbidden', { status: 403 });
     }
     if (!env.DB) {

@@ -261,6 +261,15 @@ export function checkConfig(config) {
     problems.push('还没设置投稿发布群：把我拉进群里，在群里发 /bind 就能设定（也可以填 wrangler.toml）');
   }
   if (config.admins.length === 0) problems.push('缺少 ADMIN_IDS（私聊机器人发 /myid 获取）');
+  // webhook secret 未配置时，任何人都能 POST /webhook 伪造 Telegram update
+  //（包括冒充管理员身份）。不阻断启动（老部署可能还没配），但 /diag 与启动
+  // 自检必须喊出来。
+  if (!config.webhookSecret) {
+    problems.push(
+      '强烈建议设置 WEBHOOK_SECRET（`npx wrangler secret put WEBHOOK_SECRET`，再让 Telegram 以 secret_token 调 webhook）：' +
+        '没有它，伪造的 Telegram 消息会被当作真实投稿/管理员指令处理',
+    );
+  }
   if (config.options.requireReview && config.reviewChatId === null) {
     problems.push(
       '开启了审核模式，但没有独立的审核群（ADMIN_CHAT_ID）。审核消息不能发到公开的发布群，' +

@@ -1074,6 +1074,80 @@ test('发布目标：频道 /bind 需要 Owner 仍是频道管理员，并登记
   assert.equal(target.enabled, 1);
 });
 
+test('webhook：配置了 WEBHOOK_SECRET 后，secret 头缺失或不匹配一律 403', async () => {
+  const h = createHarness();
+  const update = JSON.stringify({
+    update_id: 990001,
+    message: {
+      message_id: 1,
+      from: { id: 1, is_bot: false, first_name: 'x' },
+      chat: { id: 1, type: 'private' },
+      date: 1,
+      text: '/start',
+    },
+  });
+
+  const missing = await worker.fetch(
+    new Request(`https://bot.example/webhook/${SECRET}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: update,
+    }),
+    h.env,
+    h.ctx,
+  );
+  assert.equal(missing.status, 403, '缺 secret 头不能再放行（伪造 update 的门）');
+
+  const wrong = await worker.fetch(
+    new Request(`https://bot.example/webhook/${SECRET}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'X-Telegram-Bot-Api-Secret-Token': 'nope' },
+      body: update,
+    }),
+    h.env,
+    h.ctx,
+  );
+  assert.equal(wrong.status, 403);
+
+  const ok = await worker.fetch(
+    new Request(`https://bot.example/webhook/${SECRET}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'X-Telegram-Bot-Api-Secret-Token': SECRET },
+      body: update,
+    }),
+    h.env,
+    h.ctx,
+  );
+  assert.equal(ok.status, 200, '带正确 secret 头的合法流量不受影响');
+  await h.drain();
+});
+
+test('webhook：未配置 WEBHOOK_SECRET 时自检必须警告（fail-open 保持可用）', () => {
+  const config = loadConfig({ BOT_TOKEN: 'test-token', ADMIN_IDS: '1', TARGET_CHAT_ID: '-1001' });
+  const problems = checkConfig(config);
+  assert.ok(
+    problems.some((item) => item.includes('WEBHOOK_SECRET')),
+    `自检必须点名 WEBHOOK_SECRET：${JSON.stringify(problems)}`,
+  );
+});
+
+test('webhook：/health 深度自检 D1（不可达时 503）', async () => {
+  const h = createHarness();
+  const ok = await worker.fetch(new Request('https://bot.example/health'), h.env, h.ctx);
+  assert.equal(ok.status, 200);
+  const body = await ok.json();
+  assert.equal(body.db, 'ok');
+
+  const broken = createHarness();
+  broken.env.DB = {
+    prepare: () => {
+      throw new Error('d1 down');
+    },
+  };
+  const bad = await worker.fetch(new Request('https://bot.example/health'), broken.env, broken.ctx);
+  assert.equal(bad.status, 503);
+});
+
 test('telegram client：editMessageCaption 通道（caption 卡片硬ening）', async () => {
   const h = createHarness();
   const { Telegram } = await import('../src/telegram.js');
