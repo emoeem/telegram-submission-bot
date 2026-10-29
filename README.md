@@ -206,7 +206,7 @@ https://submission-bot.<你的子域>.workers.dev/setup?secret=<你的 WEBHOOK_S
 
 ### 5. 把机器人接到你的群
 
-1. 私聊机器人发 `/myid`，拿到你自己的用户 ID，填进 [wrangler.example.toml](wrangler.example.toml) 的 `ADMIN_IDS`，然后 `npm run deploy`。
+1. 私聊机器人发 `/myid`，拿到你自己的用户 ID，填进本地 `wrangler.toml` 的 `ADMIN_IDS`（模板见 [wrangler.example.toml](wrangler.example.toml)），然后 `npm run deploy`。
    （这一步必须先做：`ADMIN_IDS` 中的 Owner 是唯一可以授权发布目标的人。）
 2. 把机器人拉进你的**群组/频道**。群组需要给机器人管理员权限；频道需要给机器人管理员权限。
 3. 在目标群组里，由 Owner 发 `/bind`；如果是论坛群，在希望发布的 Topic 里发 `/bind`。这会把目标写入 D1，**不需要再填群 ID、也不需要重新部署**。
@@ -368,7 +368,7 @@ npm run db:migrate:local    # 本地调试库
 
 ## 配置速查
 
-都在 [wrangler.example.toml](wrangler.example.toml) 的 `[vars]` 里（改完 `npm run deploy` 生效）；
+都在本地 `wrangler.toml` 的 `[vars]` 里（改完 `npm run deploy` 生效；模板见 [wrangler.example.toml](wrangler.example.toml)）；
 `BOT_TOKEN`、`WEBHOOK_SECRET` 用 `wrangler secret put` 存。
 
 | 变量 | 默认 | 说明 |
@@ -637,7 +637,7 @@ npm run dev           # 本地起 Worker（wrangler dev）
 
 **审核模式为什么开不起来？**
 审核必须发到**独立**的审核群，否则未审核的草稿会直接出现在公开群里。请先设置 `ADMIN_CHAT_ID`
-（`npx wrangler secret put ADMIN_CHAT_ID` 或填在 [wrangler.example.toml](wrangler.example.toml) 里），再执行 `/review on`。
+（`npx wrangler secret put ADMIN_CHAT_ID` 或填在本地 `wrangler.toml` 里），再执行 `/review on`。
 审核群**不能**和任何一个发布目标相同（`/review on` 会拒绝，用户点确认时也会被拦住并给出提示）；
 `/settings` 会显示当前审核群。审核卡片只发到审核群自己的主消息区，不会带上发布目标的 forum topic。
 
@@ -646,7 +646,7 @@ npm run dev           # 本地起 Worker（wrangler dev）
 
 **投稿时让用户等 30 秒 / 要做验证？**
 这是防滥用功能，分别是 `NEW_USER_COOLDOWN_SECONDS`（新用户冷却）和 `CAPTCHA`（表情验证）。
-不想用就在 [wrangler.example.toml](wrangler.example.toml) 里改成 `0` 再 `npm run deploy`。
+不想用就在本地 `wrangler.toml` 里改成 `0` 再 `npm run deploy`。
 
 **标签太多想关掉？**
 把 `AUTO_HASHTAGS` 设成 `0`，就只保留 `TAG` 那一个标签。
@@ -684,7 +684,7 @@ wrangler 把请求打到了「你当前没有凭据的账号」上。本机如�
    即使你现在 `wrangler login` 的是另一个账号，它也会拿旧账号去发请求 → 10000；
 2. 反过来，清掉缓存后又可能把 Worker 建到当前登录的那个账号里（而那里的 D1 数据库并不存在）。
 
-所以本项目的 [wrangler.example.toml](wrangler.example.toml) 里**显式钉了 `account_id`**：所有命令只认这一个账号，
+所以本项目的配置里**显式钉了 `account_id`**（模板见 [wrangler.example.toml](wrangler.example.toml)）：所有命令只认这一个账号，
 凭据不对就立刻报错，不会静默跑到别的账号去。要在这个账号上部署，用它的 **API Token** 最省事
 （不干扰本机其他项目的登录状态）：
 
