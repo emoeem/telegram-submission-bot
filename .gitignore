@@ -1,0 +1,12 @@
+node_modules/
+.wrangler/
+.dev.vars
+*.log
+.DS_Store
+data/
+.npm-cache/
+.backup/
+# 真实部署配置（账号/D1/群/管理员 ID）；仓库只提交 wrangler.example.toml
+wrangler.toml
+# 本地 Play Store 调试产物，不属于本机器人项目
+playstore-debug/

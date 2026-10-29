@@ -1,0 +1,28 @@
+{
+  "name": "telegram-submission-bot",
+  "version": "1.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Telegram 投稿机器人 · Cloudflare Workers + D1",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "node --test \"test/**/*.test.js\"",
+    "db:init": "wrangler d1 execute submission-bot-db --remote --file=./schema.sql",
+    "db:init:local": "wrangler d1 execute submission-bot-db --local --file=./schema.sql",
+    "db:migrate": "node scripts/migrate.mjs --remote",
+    "db:migrate:local": "node scripts/migrate.mjs",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"{src,test}/**/*.js\"",
+    "format:check": "prettier --check \"{src,test}/**/*.js\"",
+    "check": "npm run lint && npm run format:check && npm test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.11.0",
+    "globals": "^17.12.0",
+    "prettier": "^3.9.9",
+    "wrangler": "^4.20.0"
+  }
+}

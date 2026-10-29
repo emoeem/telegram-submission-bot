@@ -1,0 +1,116 @@
+# 示例配置：复制为 wrangler.toml 后填入你自己的值。
+#   cp wrangler.example.toml wrangler.toml
+#
+# wrangler.toml 已被 .gitignore 忽略：真实账号 ID、D1 ID、群/管理员 ID 不要提交。
+#
+# 需要替换的占位符：
+#   1) account_id        Cloudflare 账号 ID（dash.cloudflare.com 右侧可见）
+#   2) database_id       `npx wrangler d1 create submission-bot-db` 的输出
+#   3) ADMIN_IDS        管理员 Telegram 用户 ID，多个用英文逗号分隔
+#   4) MAIN_GROUP_URL   群邀请链接（可留空）
+#   5) WEB_PUBLIC_URL   对外网页投稿地址（可留空；不需要网页投稿就把 WEB_ENABLED 设成 0）
+name = "submission-bot"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+
+account_id = "<CLOUDFLARE_ACCOUNT_ID>"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "submission-bot-db"
+database_id = "<D1_DATABASE_ID>"
+
+[vars]
+# 旧版单目标兼容配置；正式版本推荐留空，由 Owner 用 /bind 管理 D1 多目标
+TARGET_CHAT_ID = ""
+MAIN_GROUP_URL = "https://t.me/+<invite-code>"
+
+# 审核群（可选；开启审核模式时必填）：必须是和发布群不同的会话
+ADMIN_CHAT_ID = ""
+
+# 管理员用户 ID，多个用英文逗号分隔。私聊机器人发 /myid 可以拿到
+ADMIN_IDS = "<TELEGRAM_ADMIN_USER_ID>"
+
+# 话题群（论坛群）里指定发布到哪个 topic，可留空
+TOPIC_ID = ""
+
+# "1" = 投稿先发到独立审核群（ADMIN_CHAT_ID），管理员点「通过」才公开；"0" = 直接发布
+REQUIRE_REVIEW = "0"
+
+# 用户回答后自动删掉他的消息，让对话干净
+DELETE_USER_MESSAGES = "1"
+
+MAX_PHOTOS = "9"
+MAX_ATTACHMENTS = "10"
+MAX_TEXT_LENGTH = "2000"
+
+# 未完成的草稿保留多久（秒），过期自动清理。0 = 永不过期
+SESSION_TTL_SECONDS = "604800"
+
+# 每个用户最多挂起几份草稿
+MAX_DRAFTS = "5"
+
+# "1" = 接 Telegram 官方评论区；"0" = 关掉
+DISCUSSION_COMMENTS = "1"
+
+# 评论通知聚合窗口（秒）与单条通知最多列几条
+COMMENT_NOTIFY_COOLDOWN_SECONDS = "120"
+COMMENT_NOTIFY_MAX = "5"
+
+RATE_LIMIT_COUNT = "5"
+RATE_LIMIT_WINDOW_SECONDS = "600"
+
+TAG = "#投稿"
+FOOTER = "—— 投稿机器人"
+ANONYMOUS_LABEL = "匿名投稿"
+
+# 按分类和内容类型自动生成多条标签
+AUTO_HASHTAGS = "1"
+
+# 投稿前需要点对表情验证，防脚本刷投稿
+CAPTCHA = "1"
+
+# 敏感词（逗号分隔）：审核模式下标给管理员看，普通模式下直接拦住
+BANNED_WORDS = ""
+
+# "1" = 投稿里不允许带链接
+BLOCK_LINKS = "0"
+
+# 同一用户多久内不许投重复内容（秒），0 = 不检查
+DUPLICATE_WINDOW_SECONDS = "86400"
+
+# 新用户第一次投稿前的等待时间（秒），0 = 不限制
+NEW_USER_COOLDOWN_SECONDS = "30"
+
+# 审核时的一键驳回理由（逗号分隔）
+REJECT_REASONS = "内容与本群主题无关,广告或推广内容,含违规内容,重复投稿,内容太乱，请整理后再投"
+
+# ---------------- 网页投稿（/submit） ----------------
+WEB_ENABLED = "1"
+
+# "1" = 网页投稿必须管理员审核后才发布（强烈建议保持 1：网页没有 Telegram 身份）
+WEB_REQUIRE_REVIEW = "1"
+
+# 同一访客 IP 的限流：窗口内最多提交几次 / 窗口长度（秒）
+WEB_RATE_LIMIT_COUNT = "3"
+WEB_RATE_LIMIT_WINDOW_SECONDS = "3600"
+
+# 单条最多几个文件 / 单个文件上限（MB）
+WEB_MAX_FILES = "6"
+WEB_MAX_FILE_MB = "10"
+
+# 全天硬上限（条）：0 = 关闭
+WEB_DAILY_LIMIT = "300"
+
+# 待审积压上限（条）：堆到这个数就停收，管理员审掉后自动放开。0 = 关闭
+WEB_PENDING_LIMIT = "100"
+
+# 填表最短用时（秒）：比这还快的提交当脚本丢掉
+WEB_MIN_FILL_SECONDS = "3"
+
+# 对外的网页投稿地址；留空则不显示网页入口
+WEB_PUBLIC_URL = "https://<your-domain>/submit"
+
+# 密钥不写在这里，用 secret 存：
+#   BOT_TOKEN、WEBHOOK_SECRET（必须）
+#   RELAY_SECRET（只有走中继时才需要）
