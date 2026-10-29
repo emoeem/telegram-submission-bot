@@ -69,7 +69,7 @@ npm run check         # lint + format:check + test 一条龙
 - **频道支持**：频道通过 `channel_post` 处理 `/bind`，并要求机器人 Owner 仍是频道管理员
 - **Topic 安全回退**：绑定的话题被关闭时自动回退到目标聊天主区，不再因为 `TOPIC_CLOSED` 让整条投稿失败
 - **`/my` 查看自己的投稿记录**：最近 10 条的状态（待审/已发布/未通过/发布失败/已撤下）和链接
-- **草稿会过期**：未完成的投稿默认保留 7 天（`SESSION_TTL_SECONDS`），过期自动清理，不会突然冒出一份几个月前的旧草稿
+- **未完成的会话会过期**：写了一半还没挂起的投稿默认保留 7 天（`SESSION_TTL_SECONDS`），过期自动清理。**挂起的草稿（`/drafts`）不受这个 TTL 影响**，会一直留着直到你自己删除或份数超上限被挤出
 - 配置随时改：群里发 `/bind` 授权发布目标、`/targets` 管理目标、`/review on|off` 切换审核模式，**改完立即生效，不用重新部署**
 - 自动多标签：按分类和内容类型生成 `#投稿 #图片分享 #图片` 这样的标签 + 可点击的内容链接回执
 - 防刷：每个用户单位时间内投稿次数可限制；黑名单 `/ban`
@@ -126,7 +126,7 @@ IDLE ──/start──▶ COLLECTING ──最后一步答完──▶ PREVIEW
 - `PREVIEW`：确认页（`step_id` 为 NULL）；此时打字不会污染数据
 - `PUBLISHING`：已抢到发布租约（120 秒）；Worker 中途崩溃后租约过期会自动降级为 `FAILED`，用户回去点「继续投稿」即可重试
 - `FAILED`：保留草稿和投稿记录，给「重试 / 返回修改 / 取消」
-- 任何阶段点「取消」都会清空会话与附件；草稿超过 `SESSION_TTL_SECONDS` 自动作废
+- 任何阶段点「取消」都会清空会话与附件；未挂起的会话超过 `SESSION_TTL_SECONDS` 自动作废（挂起的草稿长期保留）
 
 投稿记录本身的 `submissions.status` 相应扩展为 `pending / publishing / published / rejected / recalled / failed`，所有状态变更都走带条件的 `UPDATE ... WHERE status IN (...)`，并发下只有一次能生效。
 
@@ -231,7 +231,17 @@ npm run db:migrate        # 线上库；本地调试库用 npm run db:migrate:lo
 
 ## 网页投稿（不用 Telegram 也能投）
 
-## 网页投稿（不用 Telegram 也能投）
+### 投稿者的收件箱（网页投稿的进度与对话入口）
+
+投稿成功后页面会给出一个**私人收件箱链接**（`/submit/inbox#v=<viewer 令牌>`，令牌为 64 位随机串，只在投稿者自己的浏览器里保存）。打开可以：
+
+- 看这条投稿的**当前状态**（待审核 / 已发布 / 已拒绝）；
+- **接收管理员留言**并回复（双向对话，代替 Telegram 私聊通知）；
+- 留了邮箱的话，审核结果与新评论还会收到 **Resend 邮件通知**（可选）。
+
+收件箱链接等同凭据：不要外传；泄漏后没有找回通道（投稿者可重新投稿获得新链接）。
+配套 API：`GET /api/submit/inbox`、`POST /api/submit/reply`、`POST /api/submit/message`（都以 viewer 令牌鉴权）。
+
 
 给「没有 Telegram / 国内打不开 Telegram」的访客准备的网页表单：`GET /submit` 是页面，
 `POST /api/submit` 是提交接口，都由同一个 Worker 提供，**不依赖任何外部 CDN**。
@@ -413,6 +423,12 @@ npm run db:migrate:local    # 本地调试库
 | `PUBLISH_TEMPLATE` | 见下 | 发布格式模板 |
 | `TEMPLATES_JSON` | 空 | 覆盖提问流程（见下一节） |
 | `TEXTS_JSON` | 空 | 覆盖所有文案（见下一节） |
+| `WEB_DAILY_LIMIT` | `300` | 网页投稿全天硬上限（换 IP 也拦得住），`0` = 不限 |
+| `WEB_PENDING_LIMIT` | `50` | 待审核的网页投稿积压到这个数就暂停收新稿，审掉后自动恢复，`0` = 不限 |
+| `MAIN_GROUP_URL` | 空 | 目标群的公开加入链接（`/start` 欢迎语里会给出） |
+| `RELAY_IP_HEADER` | 空 | 中继链路里携带真实访客 IP 的请求头名（默认认 `x-vercel-proxied-for`，需配合 `RELAY_SECRET`） |
+| `REVIEW_API_SECRET` | 空（建议用 secret 存） | 后台管理端审核 API（`/api/admin/review/*`）的鉴权密钥；不配则整组接口 503 关闭 |
+| `RESEND_API_KEY` / `MAIL_FROM` | 空 | Resend 事务邮件：网页投稿者的审核结果/新评论邮件通知（两者都配才启用；失败自动重试一次） |
 | `TELEGRAM_API_BASE` | `https://api.telegram.org` | 一般不用改；本地测试会指向假服务 |
 
 ### 发布格式

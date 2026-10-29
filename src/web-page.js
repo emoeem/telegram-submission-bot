@@ -242,7 +242,9 @@ export function renderSubmitPage({ config, template, botUsername = null }) {
   }
 
   function loadCaptcha() {
-    if (!cfg.captcha) return Promise.resolve();
+    // 无论 CAPTCHA 开关如何都要取 token：服务端对每次提交都校验 HMAC 签名，
+    // CAPTCHA=0 时 /api/submit/captcha 发的是"免答"token。
+    // 之前 cfg.captcha=0 直接 return，token 永远是空串 → 提交 100% 403。
     return fetch(cfg.captchaUrl, { credentials: 'omit' })
       .then(function (response) { return response.json(); })
       .then(function (data) {
@@ -253,7 +255,10 @@ export function renderSubmitPage({ config, template, botUsername = null }) {
         var input = form.querySelector('input[name="captcha"]');
         if (input) input.value = '';
       })
-      .catch(function () { showError(['验证题加载失败，请刷新页面重试。']); });
+      .catch(function () {
+        // 拿不到 token 提交必然失败，必须报出来而不是静默
+        showError(['验证加载失败，请刷新页面重试。']);
+      });
   }
 
   // 验证码输入框：移动端键盘可能是数字键盘，也可能带出全角数字/空格，

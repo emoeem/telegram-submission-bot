@@ -979,10 +979,13 @@ export class Store {
     return Number(row?.count ?? 1);
   }
 
-  async pruneWebRateLimits(olderThanSeconds = 86400) {
+  async pruneWebRateLimits(olderThanSeconds = 86400, now = nowSeconds()) {
+    // now 由调用方传入（生产=真实时钟，测试=注入的假时钟）：prune 与限流桶
+    // 必须用同一只钟，否则注入假时钟的部署/测试会被真时钟判成"过期"清桶，
+    // 限流计数随机归零（这正是每小时偶发一次的测试假失败的根因）。
     await this.db
       .prepare('DELETE FROM web_rate_limits WHERE window_start < ?')
-      .bind(nowSeconds() - olderThanSeconds)
+      .bind(now - olderThanSeconds)
       .run();
   }
 

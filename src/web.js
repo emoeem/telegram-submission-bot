@@ -461,7 +461,14 @@ async function handleSubmit(request, { config, bot, template, templateId, secret
           const minutes = Math.max(1, Math.ceil(webRateLimitWindowSeconds / 60));
           return jsonResponse({ ok: false, error: `提交太频繁了，请 ${minutes} 分钟后再试` }, 429);
         }
-        if (Math.random() < 0.02) await bot.store.pruneWebRateLimits();
+        if (Math.random() < 0.02) {
+          // prune 的"现在"必须与限流桶同一只钟（env.WEB_RATE_LIMIT_CLOCK 注入），
+          // 否则测试/特殊部署里桶会被真时钟判成过期随机清掉。
+          const injectedClock = env?.WEB_RATE_LIMIT_CLOCK;
+          const nowSecondsForPrune =
+            typeof injectedClock === 'function' ? Math.floor(Number(injectedClock())) : nowSeconds();
+          await bot.store.pruneWebRateLimits(86400, nowSecondsForPrune);
+        }
       } catch (error) {
         // 老库还没跑迁移（没有 web_rate_limits 表）时降级为"不限流"，而不是把投稿整个打挂
         bot.logger?.warn?.(`网页限流表读不到（可能还没执行 npm run db:migrate）：${error?.message ?? error}`);

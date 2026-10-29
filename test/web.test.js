@@ -635,3 +635,17 @@ test('网页投稿：两个总闸都设 0 时等于关闭（保留可配置性�
     assert.equal(result.status, 200);
   }
 });
+
+test('网页投稿：CAPTCHA=0 时提交不再 403（token 照常签发，无需作答）', async () => {
+  const h = webHarness({ CAPTCHA: '0' });
+  const captcha = await getCaptcha(h);
+  assert.equal(captcha.question, null, 'CAPTCHA=0 不下发验证题');
+
+  const form = new FormData();
+  for (const [key, value] of Object.entries(defaultFields())) form.append(key, value);
+  form.append('token', captcha.token);
+  const response = await worker.fetch(new Request(`${BASE}/api/submit`, { method: 'POST', body: form }), h.env, h.ctx);
+  const body = await response.json();
+  assert.equal(response.status, 200, `CAPTCHA=0 提交应成功：${JSON.stringify(body)}`);
+  assert.equal(body.status, 'pending');
+});
