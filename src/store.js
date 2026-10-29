@@ -370,7 +370,15 @@ export class Store {
       await this.db.prepare('DELETE FROM session_media WHERE user_id = ? AND step_id = ?').bind(userId, stepId).run();
       return;
     }
-    await this.db.prepare('DELETE FROM session_media WHERE user_id = ?').bind(userId).run();
+    // 全清（finishSession / cancel）只清向导暂存的媒体；`__edit:` 前缀是管理员
+    // 「改媒体」流程的暂存区，由它自己的完成/取消清理——否则管理员在编辑媒体
+    // 中途顺手 /cancel 一次投稿向导，正在改的媒体就被静默清空了。
+    await this.db
+      .prepare(
+        "DELETE FROM session_media WHERE user_id = ? AND (step_id IS NULL OR substr(step_id, 1, 7) <> '__edit:')",
+      )
+      .bind(userId)
+      .run();
   }
 
   /** 上移/下移一个附件：把整段 ordinal 重排，简单可靠。 */

@@ -1963,7 +1963,9 @@ export class Bot {
       const message = String(error?.message ?? error);
       await this.store.releaseGuard(guardKey);
       await this.releaseSubmissionLease(submissionId);
-      await this.store.updateSubmission(submissionId, { status: 'failed' });
+      // 只有还停在 publishing 的投稿才能打成 failed：消息已经发到群里
+      // （published 落库）的，收尾 D1 抖动不能把真实状态覆盖掉。
+      await this.store.casSubmissionStatus(submissionId, ['publishing'], 'failed');
       await this.store.audit(from.id, 'submission.publish_failed', 'submission', submissionId, message);
       state.phase = 'failed';
       state.lastError = message;
@@ -2191,7 +2193,16 @@ export class Bot {
   /** 投稿前检查：敏感词 / 链接 / 重复内容 / 新用户冷却。 */
   async screenSubmission({ userId, data, excludeSubmissionId = null }) {
     const { options } = this.config;
-    const plain = [textOf(data.title), textOf(data.body), textOf(data.signature), textOf(data.contact)]
+    // 收齐全部文本字段做筛查，而不是写死 title/body/signature/contact 四个 id：
+    // 自定义模板（TEMPLATES_JSON）换过 step id 后，旧写法会让正文静默绕过
+    // 敏感词与重复检测。非字符串字段（媒体数组等）天然被过滤。
+    const plain = Object.entries(data ?? {})
+      .filter(
+        ([key, value]) =>
+          !key.startsWith('__') &&
+          (typeof value === 'string' || (value && typeof value === 'object' && typeof value.plain === 'string')),
+      )
+      .map(([, value]) => textOf(value))
       .filter(Boolean)
       .join('\n');
     const flags = [];
@@ -3243,7 +3254,7 @@ export class Bot {
 
     if (message) {
       const note = `\n\n✅ 已通过（#${submission.id}）`;
-      await this.tryEditMarkup(message.chat.id, message.message_id, message.text ? `${message.text}${note}` : null, {
+      await this.editReviewCard(message, `${message.text ?? message.caption ?? ''}${note}`, {
         keyboard: adminKeyboard(this.texts, submission.id, {
           review: false,
           web: !this.canNotifyAuthor(submission),
@@ -3257,12 +3268,9 @@ export class Bot {
   async onRejectPrompt(query, submission, message) {
     const keyboard = rejectReasonsKeyboard(this.texts, submission.id, this.config.options.rejectReasons);
     if (message) {
-      await this.tryEditMarkup(
-        message.chat.id,
-        message.message_id,
-        message.text
-          ? `${message.text}\n\n${this.texts('rejectReasonPrompt', { submission_id: submission.id })}`
-          : null,
+      await this.editReviewCard(
+        message,
+        `${message.text ?? message.caption ?? ''}\n\n${this.texts('rejectReasonPrompt', { submission_id: submission.id })}`,
         { keyboard },
       );
       return this.answer(query.id, { text: '选一个理由' });
@@ -3309,7 +3317,7 @@ export class Bot {
     await this.answer(query.id, { text: this.texts('adminRejectedMsg', { submission_id: submission.id }) });
     if (message) {
       const tail = reason ? `\n\n❌ 已拒绝：${reason}` : '\n\n❌ 已拒绝';
-      await this.tryEditMarkup(message.chat.id, message.message_id, message.text ? `${message.text}${tail}` : null, {
+      await this.editReviewCard(message, `${message.text ?? message.caption ?? ''}${tail}`, {
         removeKeyboard: true,
       });
     }
@@ -3814,20 +3822,21 @@ export class Bot {
     }
 
     if (pending.action === 'reject_custom') {
-      if (await this.isPublishInFlight(submission.id)) {
-        await this.reply(chatId, this.texts('adminBeingPublished'));
+      // 走 rejectSubmission 唯一实现：它带 published/in_flight 守卫与审计，
+      // 网页投稿的作者也会被通知。此前这里绕开状态机直写 status，管理员
+      // 输入理由的窗口里投稿被发布的话，会留下"群里已公开、库里已拒绝"。
+      const result = await this.rejectSubmission(submission.id, {
+        actorId: pending.adminId ?? chatId,
+        actorLabel: 'telegram',
+        reason: text === '/skip' ? '' : text,
+      });
+      if (!result.ok) {
+        const notice =
+          result.reason === 'already_published'
+            ? this.texts('adminAlreadyPublished', { submission_id: submission.id })
+            : this.texts('adminBeingPublished');
+        await this.reply(chatId, notice);
         return true;
-      }
-      const reason = text === '/skip' ? '' : escapeHtml(text);
-      await this.store.updateSubmission(submission.id, { status: 'rejected' });
-      if (this.canNotifyAuthor(submission)) {
-        await this.tryReply(
-          submission.userId,
-          this.texts('rejected', { reason: reason ? `\n\n理由：${reason}` : '' }),
-          {
-            raw: true,
-          },
-        );
       }
       await this.reply(chatId, this.texts('adminRejectDone', { submission_id: submission.id }));
       return true;
@@ -3939,15 +3948,19 @@ export class Bot {
   async handleGroupMessage(message) {
     // 0) 布置过"收不收得到群消息"的测试 → 私聊回报结果
     await this.checkDiagWatch(message);
+    const text = (message.text ?? '').trim();
+    // 命令优先：以回复形式发的 /topic、/bind 等不是评论，必须照常执行——
+    // 之前评论分支先吃掉消息，命令被静默吞掉。
+    if (text.startsWith('/')) {
+      return this.handleCommand(message, {
+        chatId: message.chat.id,
+        from: message.from,
+        isPrivate: false,
+      });
+    }
     // 1) 回复已发布的投稿 = 公开评论（管理员也一样，不再偷偷转成私聊）
     if (message.reply_to_message && (await this.handleDiscussionComment(message))) return undefined;
-    const text = (message.text ?? '').trim();
-    if (!text.startsWith('/')) return undefined;
-    return this.handleCommand(message, {
-      chatId: message.chat.id,
-      from: message.from,
-      isPrivate: false,
-    });
+    return undefined;
   }
 
   // ------------------------------------------------------------------
@@ -4558,21 +4571,24 @@ export class Bot {
     const apiKey = this.config.resendApiKey;
     const from = this.config.mailFrom;
     if (!apiKey || !from || !to) return false;
-    try {
-      const response = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ from, to: [to], subject, text }),
-      });
-      if (!response.ok) {
-        this.logger.warn?.(`邮件发送失败（${response.status}）：${to}`);
-        return false;
+    // 429/瞬时 5xx 很常见：失败隔 800ms 重试一次，再失败才放弃。
+    // 邮件是审核结果/新评论的唯一"推送"通道（收件箱是被动的），丢了投稿者不知情。
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const response = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ from, to: [to], subject, text }),
+        });
+        if (response.ok) return true;
+        this.logger.warn?.(`邮件发送失败（${response.status}，第 ${attempt + 1} 次）：${to}`);
+        if (response.status !== 429 && response.status < 500) return false; // 4xx 不值得重试
+      } catch (error) {
+        this.logger.warn?.(`邮件发送异常（第 ${attempt + 1} 次）：${error?.message ?? error}`);
       }
-      return true;
-    } catch (error) {
-      this.logger.warn?.(`邮件发送异常：${error?.message ?? error}`);
-      return false;
+      if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 800));
     }
+    return false;
   }
 
   /** 管理员的话 → 网页投稿者的收件箱（网页投稿没有私聊，只能落库 + 邮件提醒）。 */
@@ -4732,6 +4748,31 @@ export class Bot {
       return true;
     } catch (error) {
       this.logger.warn?.(`编辑消息失败：${error?.message ?? error}`);
+      return false;
+    }
+  }
+
+  /**
+   * 审核卡片编辑的唯一入口：文本卡片走 editMessageText，媒体 caption 卡片
+   * （message.text 为 undefined）走 editMessageCaption。之前调用点只看
+   * message.text，caption 卡片拿到 null 直接放弃，通过/驳回后按钮不消失。
+   */
+  async editReviewCard(message, text, options = {}) {
+    if (!message) return false;
+    if (message.text !== undefined && message.text !== null) {
+      return this.tryEditMarkup(message.chat.id, message.message_id, text, options);
+    }
+    return this.tryEditCaptionMarkup(message.chat.id, message.message_id, text, options);
+  }
+
+  /** 媒体 caption 卡片的编辑入口：editMessageText 对媒体消息会 400，走 editMessageCaption。 */
+  async tryEditCaptionMarkup(chatId, messageId, caption, { keyboard } = {}) {
+    if (!caption || !messageId) return false;
+    try {
+      await this.tg.editMessageCaption(chatId, messageId, caption, { keyboard });
+      return true;
+    } catch (error) {
+      this.logger.warn?.(`编辑卡片说明失败：${error?.message ?? error}`);
       return false;
     }
   }

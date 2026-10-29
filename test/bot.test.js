@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import worker from '../src/index.js';
+import { checkConfig, loadConfig } from '../src/config.js';
 import { callbackDataOf, findButton } from './fake-telegram.js';
 import {
   ADMIN_ID,
@@ -1071,4 +1072,17 @@ test('发布目标：频道 /bind 需要 Owner 仍是频道管理员，并登记
   assert.ok(target);
   assert.equal(target.chat_type, 'channel');
   assert.equal(target.enabled, 1);
+});
+
+test('telegram client：editMessageCaption 通道（caption 卡片硬ening）', async () => {
+  const h = createHarness();
+  const { Telegram } = await import('../src/telegram.js');
+  const tg = new Telegram('test-token', { apiBase: 'http://fake.local', fetchImpl: h.fake.fetch });
+  await tg.editMessageCaption(TARGET_CHAT, 42, '<b>新说明</b>', { keyboard: { inline_keyboard: [[]] } });
+  const call = h.fake.callsOf('editMessageCaption').at(-1);
+  assert.ok(call, 'editMessageCaption 应被调用');
+  assert.equal(call.caption, '<b>新说明</b>');
+  assert.equal(call.chat_id, TARGET_CHAT);
+  assert.equal(call.message_id, 42);
+  assert.ok(call.reply_markup, '键盘要跟着走');
 });

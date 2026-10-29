@@ -240,6 +240,21 @@ export function createFakeTelegram({
         }
         return ok(target ?? true);
       }
+      case 'editMessageCaption': {
+        // 媒体 caption 卡片的编辑：与 editMessageText 同一存储语义，只是改 caption
+        state.captionEdits = state.captionEdits ?? [];
+        state.captionEdits.push({
+          chatId: Number(params.chat_id),
+          messageId: params.message_id,
+          caption: params.caption,
+        });
+        const target = state.messages.find((m) => m.message_id === params.message_id);
+        if (target) {
+          target.caption = params.caption;
+          target.keyboard = params.reply_markup ?? null;
+        }
+        return ok(target ?? true);
+      }
       case 'editMessageMedia': {
         const media = params.media ?? {};
         state.mediaEdits.push({

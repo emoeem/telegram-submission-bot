@@ -133,3 +133,18 @@ test('管理员改写过文案时，整条按改后的发', () => {
   });
   assert.equal(text, '#投稿 #修改过的\n\n管理员改写的文案');
 });
+
+test('fitHtml：截断不会把标签切成两半，闭合栈完整', async () => {
+  const { fitHtml } = await import('../src/utils.js');
+  const text = `${'<b>加粗开头'.repeat(30)}<a href="https://example.com/xxxx">链接`;
+  const cut = fitHtml(text, 60);
+  const opens = (cut.match(/<b>/g) ?? []).length;
+  const closes = (cut.match(/<\/b>/g) ?? []).length;
+  assert.equal(opens, closes, `b 标签必须配对：${cut}`);
+  const aOpens = (cut.match(/<a /g) ?? []).length;
+  const aCloses = (cut.match(/<\/a>/g) ?? []).length;
+  assert.equal(aOpens, aCloses, `a 标签必须配对：${cut}`);
+  assert.ok(!/<[a-zA-Z]+$/.test(cut.replace('<i>…（已截断）</i>', '')), `不能停在标签中间：${cut}`);
+  assert.ok(cut.endsWith('…（已截断）</i>'), '保留截断标记');
+  assert.equal(fitHtml('<b>hi</b>', 100), '<b>hi</b>');
+});

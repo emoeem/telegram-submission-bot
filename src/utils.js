@@ -128,11 +128,43 @@ export function randomNonce(bytes = 6) {
 /** 截断标记（长度算进预算，保证结果不超上限）。 */
 const TRUNCATION_MARK = '\n<i>…（已截断）</i>';
 
-/** 把 HTML 文本按字符预算裁到安全长度（Telegram 单条消息 4096 上限，留出余量）。 */
+/** 把 HTML 文本按字符预算裁到安全长度（Telegram 单条消息 4096 上限，留出余量）。
+ *
+ * 纯字符串切片会把 <b>/<a> 切成两半，Telegram 会以 "can't parse entities" 拒收，
+ * 发布从此永远失败。所以截断后要做三件事：剥掉被切一半的标签、补全仍开着的
+ * 标签栈、清掉被截断的 HTML 实体前缀。只预期本项目 render 输出的标签子集。 */
 export function fitHtml(text, budget) {
   const value = String(text ?? '');
   if (value.length <= budget) return value;
-  return `${value.slice(0, Math.max(0, budget - TRUNCATION_MARK.length))}${TRUNCATION_MARK}`;
+  let cut = value.slice(0, Math.max(0, budget - TRUNCATION_MARK.length));
+  // 被切断的实体（&am…）先清掉
+  const trailingEntity = /&[a-zA-Z0-9#]{0,9}$/.exec(cut);
+  if (trailingEntity) cut = cut.slice(0, trailingEntity.index);
+  // 被切一半的起始标签（<b>abc<d…）直接丢弃
+  const lastOpen = cut.lastIndexOf('<');
+  const lastClose = cut.lastIndexOf('>');
+  if (lastOpen > lastClose) cut = cut.slice(0, lastOpen);
+  // 闭合仍开着的标签
+  const stack = [];
+  const tagRe = /<\/?([a-zA-Z][a-zA-Z0-9]*)\b[^>]*?(\/?)>/g;
+  for (const match of cut.matchAll(tagRe)) {
+    const name = match[1].toLowerCase();
+    if (match[0].startsWith('</')) {
+      for (let i = stack.length - 1; i >= 0; i -= 1) {
+        if (stack[i] === name) {
+          stack.length = i;
+          break;
+        }
+      }
+    } else if (!match[2]) {
+      stack.push(name);
+    }
+  }
+  const closings = stack
+    .reverse()
+    .map((name) => `</${name}>`)
+    .join('');
+  return `${cut}${closings}${TRUNCATION_MARK}`;
 }
 
 /** FNV-1a：给投稿内容算一个指纹，用于重复投稿检测（不需要加密强度）。 */
