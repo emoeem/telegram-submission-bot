@@ -725,3 +725,7 @@ schema.sql          D1 表结构（可重复执行）
 migrations/         增量迁移（给已经部署过的老库用：npm run db:migrate）
 test/               端到端测试（假 Telegram + 内存 D1）
 ```
+
+## 许可证
+
+本项目采用 [Apache License 2.0](LICENSE) 许可，版权归 emoeem 所有（见 [NOTICE](NOTICE)）。
