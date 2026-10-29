@@ -288,6 +288,11 @@ export async function handleWebRequest(request, { config, bot, env }) {
 
   if (url.pathname === '/api/submit/inbox') {
     if (request.method !== 'GET') return new Response('Method Not Allowed', { status: 405 });
+    // 与收件箱写操作同一个按 IP 限流桶：这是唯一无需任何令牌就触碰 submissions
+    // 表的读端点，且查询按 __viewer 全表扫描（rows-read 随表线性涨），不限流
+    // 等于把 D1 读取量免费送人。
+    const limited = await inboxRateLimit(request, { config, bot, env });
+    if (limited) return limited;
     const viewer = normalizeViewer(url.searchParams.get('t'));
     if (!viewer) return jsonResponse({ ok: false, error: '缺少身份令牌' }, 400);
     const items = await bot.webInbox(viewer);
@@ -309,25 +314,35 @@ function normalizeViewer(raw) {
   return /^[a-f0-9]{16,64}$/i.test(value) ? value.toLowerCase() : null;
 }
 
-/** 收件箱里的两个写操作：回复某条评论 / 给管理员留言。 */
-async function handleInboxAction(request, url, { config, bot, env }) {
+/**
+ * 收件箱（读 GET /api/submit/inbox 与写 reply/message 共用）的按 IP 限流。
+ * 返回 Response 表示已限流，返回 null 放行。
+ */
+async function inboxRateLimit(request, { config, bot, env }) {
   const ip = resolveClientIp(request, { relaySecret: config.relaySecret, relayHeader: config.relayIpHeader });
   const { webRateLimitCount, webRateLimitWindowSeconds } = config.options;
   if (webRateLimitCount > 0 && webRateLimitWindowSeconds > 0) {
     if (!ip) {
       bot.logger?.warn?.('网页收件箱：拿不到访客 IP，本次跳过按 IP 限流（依赖全天总闸）');
-    } else {
-      const window = rateLimitWindow(env, webRateLimitWindowSeconds);
-      try {
-        // 先原子自增再看结果：以前是"先读、干完整件事再写"，并发请求全都读到旧计数、
-        // 全都放行，限流等于没有。bumpWebRateLimit 的单条 UPSERT 是原子的。
-        const used = await bot.store.bumpWebRateLimit(`inbox:${ip}:${window}`, window);
-        if (used > webRateLimitCount * 6) return jsonResponse({ ok: false, error: '操作太频繁了，请稍后再试' }, 429);
-      } catch {
-        /* 老库缺表时降级为不限流 */
-      }
+      return null;
+    }
+    const window = rateLimitWindow(env, webRateLimitWindowSeconds);
+    try {
+      // 先原子自增再看结果：以前是"先读、干完整件事再写"，并发请求全都读到旧计数、
+      // 全都放行，限流等于没有。bumpWebRateLimit 的单条 UPSERT 是原子的。
+      const used = await bot.store.bumpWebRateLimit(`inbox:${ip}:${window}`, window);
+      if (used > webRateLimitCount * 6) return jsonResponse({ ok: false, error: '操作太频繁了，请稍后再试' }, 429);
+    } catch {
+      /* 老库缺表时降级为不限流 */
     }
   }
+  return null;
+}
+
+/** 收件箱里的两个写操作：回复某条评论 / 给管理员留言。 */
+async function handleInboxAction(request, url, { config, bot, env }) {
+  const limited = await inboxRateLimit(request, { config, bot, env });
+  if (limited) return limited;
 
   let body;
   try {
@@ -375,6 +390,23 @@ async function handleSubmit(request, { config, bot, template, templateId, secret
       { ok: false, error: `文件太多了：一次投稿总大小不能超过 ${Math.round(budgetBytes / 1024 / 1024)} MB` },
       413,
     );
+  }
+
+  // 按 IP 的只读预检：正式的 bump+check 在表单解析之后（校验失败不烧次数），
+  // 但 formData() 会把整个 multipart 读进内存——chunked 上传不带 Content-Length，
+  // 上面的 413 预检拦不住；纯消耗流量（从不成功）也永远碰不到后面的闸。
+  // 这里只读不写：超限的 IP 连 body 都不读直接 429，正常用户的额度语义不变。
+  if (webRateLimitCount > 0 && webRateLimitWindowSeconds > 0 && ip) {
+    const window = rateLimitWindow(env, webRateLimitWindowSeconds);
+    try {
+      const used = await bot.store.getWebRateLimit(`web:${ip}:${window}`);
+      if (used >= webRateLimitCount) {
+        const minutes = Math.max(1, Math.ceil(webRateLimitWindowSeconds / 60));
+        return jsonResponse({ ok: false, error: `提交太频繁了，请 ${minutes} 分钟后再试` }, 429);
+      }
+    } catch {
+      /* 老库缺表时降级为不限流 */
+    }
   }
 
   // 全天硬上限 + 积压上限：这两道在解析表单之前，打满后连 body 都不读，省 CPU 和内存。

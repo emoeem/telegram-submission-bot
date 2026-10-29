@@ -158,10 +158,18 @@ function validateTemplate(templateId, template) {
       }
     }
   });
-  for (const step of steps) {
+  for (const [index, step] of steps.entries()) {
     const cond = step.show_if;
-    if (cond && !ids.has(cond.step)) {
+    if (!cond) continue;
+    if (!ids.has(cond.step)) {
       throw new ConfigError(`步骤 ${step.id} 的 show_if 指向了不存在的步骤 ${cond.step}`);
+    }
+    // 方向校验：visibleSteps 按步骤顺序用渐进 data 求值——show_if 指向后置
+    // 步骤时，轮到本步骤时目标还没作答，字段会被静默跳过（投稿少一块且无报错）。
+    if (steps.findIndex((candidate) => candidate.id === cond.step) >= index) {
+      throw new ConfigError(
+        `步骤 ${step.id} 的 show_if 必须指向更早的步骤（${cond.step} 在它后面，条件永远读不到答案）`,
+      );
     }
   }
 }

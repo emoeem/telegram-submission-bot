@@ -1952,12 +1952,14 @@ export class Bot {
     try {
       published = await this.publish(submission, template, { review });
       await this.store.setGuardStatus(guardKey, review ? 'submitted' : 'published');
+      if (review) {
+        // 送审完成 → 回到"待审核"（CAS：只把还停在 publishing 的打回去）。
+        // 必须先改状态再放租约：放完租约的窗口里管理员点「通过」会把 status
+        // 写成 published，随后这里的非 CAS 回写曾把已发布的稿子打回待审队列。
+        await this.store.casSubmissionStatus(submissionId, ['publishing'], 'pending');
+      }
       // 审核模式还要等管理员通过，租约必须放开，否则「通过」会被当成"正在发布中"
       await this.releaseSubmissionLease(submissionId, { published: !review });
-      if (review) {
-        // 送审完成 → 回到"待审核"，而不是停在"发布中"
-        await this.store.updateSubmission(submissionId, { status: 'pending' });
-      }
     } catch (error) {
       this.logger.error?.('发布投稿失败', error);
       const message = String(error?.message ?? error);
@@ -4409,29 +4411,39 @@ export class Bot {
 
     const { attachments, uploaded } = await this.uploadWebMedia(files, { chatId: uploadChatId });
 
-    const payload = { ...data };
-    if (mediaStepId) payload[mediaStepId] = attachments;
-    payload.__source = 'web';
-    if (ip) payload.__ip = ip;
-    // 网页投稿没有 Telegram 身份：用浏览器令牌当"我是谁"，收件箱/评论通知/回复都靠它
-    if (viewer) payload.__viewer = viewer;
-    if (email) payload.__email = email;
+    let payload;
+    let review;
+    let screening;
+    let submissionId;
+    let fullName;
+    try {
+      payload = { ...data };
+      if (mediaStepId) payload[mediaStepId] = attachments;
+      payload.__source = 'web';
+      if (ip) payload.__ip = ip;
+      // 网页投稿没有 Telegram 身份：用浏览器令牌当"我是谁"，收件箱/评论通知/回复都靠它
+      if (viewer) payload.__viewer = viewer;
+      if (email) payload.__email = email;
 
-    const review = await this.webNeedsReview();
-    const screening = await this.screenSubmission({ userId: 0, data: payload });
-    // 敏感词/链接：审核模式交给管理员判断，自动发布模式直接拒
-    if (screening.blocked && !review) throw new Error(screening.blocked);
+      review = await this.webNeedsReview();
+      screening = await this.screenSubmission({ userId: 0, data: payload });
+      // 敏感词/链接：审核模式交给管理员判断，自动发布模式直接拒
+      if (screening.blocked && !review) throw new Error(screening.blocked);
 
-    const fullName = nickname || '网页访客';
-    const submissionId = await this.store.createSubmission({
-      userId: 0,
-      username: null,
-      fullName,
-      templateId,
-      data: payload,
-      contentHash: screening.hash,
-      flags: screening.flags,
-    });
+      fullName = nickname || '网页访客';
+      submissionId = await this.store.createSubmission({
+        userId: 0,
+        username: null,
+        fullName,
+        templateId,
+        data: payload,
+        contentHash: screening.hash,
+        flags: screening.flags,
+      });
+    } catch (error) {
+      for (const messageId of uploaded) await this.tryDelete(uploadChatId, messageId);
+      throw error;
+    }
     const submission = {
       id: submissionId,
       userId: 0,

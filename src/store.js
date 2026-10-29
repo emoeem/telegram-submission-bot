@@ -930,7 +930,10 @@ export class Store {
   async countUnreadWebThread(submissionId) {
     try {
       return await this.countUnreadWebThreadStrict(submissionId);
-    } catch {
+    } catch (error) {
+      // 只吞"老库还没迁移"：真实 D1 故障原样抛出，未读数悄悄归零会误导排障
+      //（与 getWebThread / markWebThreadSeenByAuthor 同一约定）。
+      if (!isMissingTableError(error)) throw error;
       return 0;
     }
   }
@@ -1017,6 +1020,33 @@ export class Store {
   async pruneFormNonces() {
     try {
       await this.db.prepare('DELETE FROM web_form_nonces WHERE expires_at < ?').bind(nowSeconds()).run();
+    } catch (error) {
+      if (!isMissingTableError(error)) throw error;
+    }
+  }
+
+  /**
+   * 过期会话与其附件的全局清理：TTL 只在"同一个用户自己回来"时触发
+   * （loadSession），投一次就消失的用户留下的 sessions / session_media 行
+   * 此前永久留存。挂在 webhook 的 2% 随机 prune 上，与 seen_updates 同款。
+   * 注意只清"未挂起的草稿"——挂起草稿（data.__draft）长期保留的语义不变。
+   */
+  async pruneExpiredSessions(olderThanSeconds = 604800) {
+    const cutoff = nowSeconds() - olderThanSeconds;
+    try {
+      await this.db
+        .prepare(
+          `DELETE FROM session_media WHERE user_id IN (
+             SELECT user_id FROM sessions
+              WHERE updated_at < ? AND (data IS NULL OR data NOT LIKE '%"__draft"%')
+           )`,
+        )
+        .bind(cutoff)
+        .run();
+      await this.db
+        .prepare(`DELETE FROM sessions WHERE updated_at < ? AND (data IS NULL OR data NOT LIKE '%"__draft"%')`)
+        .bind(cutoff)
+        .run();
     } catch (error) {
       if (!isMissingTableError(error)) throw error;
     }

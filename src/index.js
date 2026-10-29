@@ -138,7 +138,11 @@ export default {
         await bot.ensureTargetChat();
         try {
           await bot.handleUpdate(update);
-          if (shouldPrune) await store.pruneSeenUpdates();
+          if (shouldPrune) {
+            await store.pruneSeenUpdates();
+            // 会话 TTL 的兜底清理：loadSession 只覆盖"用户自己回来"的情形
+            await store.pruneExpiredSessions(config.options.sessionTtlSeconds);
+          }
         } catch (error) {
           console.error('处理更新失败', update.update_id, error);
           await bot.notifyAdmins(`⚠️ 处理更新 ${update.update_id} 出错：${error?.message ?? error}`);
@@ -151,7 +155,8 @@ export default {
 
 async function handleSetup(url, env, config) {
   const secret = url.searchParams.get('secret') ?? '';
-  if (!config.webhookSecret || secret !== config.webhookSecret) {
+  // 与 webhook 头校验同一待遇：恒时比较（client-ip.js 的 safeEqual）。
+  if (!config.webhookSecret || !safeEqual(secret, config.webhookSecret)) {
     return json({ ok: false, error: 'secret 不正确' }, 403);
   }
 
